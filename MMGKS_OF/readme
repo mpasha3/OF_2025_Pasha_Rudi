@@ -1,0 +1,6 @@
+Hello! You need the following dependencies
+
+astra 
+pylops
+cv2
+joblib
