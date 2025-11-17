@@ -1435,7 +1435,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
                 _,v_ests,_, ux_uy_, ut_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, 
                                             scale = scale,pnorm=pnorm_opt,qnorm=qnorm_opt,proj_dim=proj_dim_opt) #solve_opt_flow(x_traj,shape,t_end)
                 v_ests = np.rint(np.array(v_ests))
-                v_ests_history.append(v_ests)
+                v_ests_history.append(v_ests.reshape(-1,nx*ny*2))
                 ux_uy_history.append(ux_uy_)
                 ut_history.append(ut_)
             Ms = []
