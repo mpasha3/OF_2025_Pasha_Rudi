@@ -26,9 +26,9 @@ def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
     nx=shape[0];ny=shape[1]
     R = np.array(list(np.ndindex(*shape)))
     kernel_x = np.zeros((2*v_max+1,2*v_max+1))
-    kernel_x[:,0] = -1 
-    kernel_x[:,-1] = 1 
-    kernel_y = kernel_x.T 
+    kernel_x[:,0] = -1
+    kernel_x[:,-1] = 1
+    kernel_y = kernel_x.T
     kernel_t = np.ones((2*v_max+1,2*v_max+1))
 
 
@@ -43,7 +43,7 @@ def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
 
         ut = vec(signal.convolve2d(u_traj[i+1], kernel_t, boundary='symm', mode='same') - signal.convolve2d(u_traj[i], kernel_t, boundary='symm', mode='same'))/(kernel_t.size)
         Li = []
-        for i in range(nx*ny): 
+        for i in range(nx*ny):
             Li.append((ux[i],uy[i],ut[i]))
         Li = np.array(Li)
         Ls.append(Li)
@@ -59,26 +59,26 @@ def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
 
     # L = gen_first_derivative_operator_2D(nx,ny)
     L = gen_2D(nx,ny)
-    a=np.zeros((L.shape[0],2*L.shape[1])) 
+    a=np.zeros((L.shape[0],2*L.shape[1]))
     from scipy.sparse import csr_matrix
     a = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     a[:,::2] = L
-    b=np.zeros((L.shape[0],2*L.shape[1])) 
+    b=np.zeros((L.shape[0],2*L.shape[1]))
     b = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     b[:,1::2] = L
     Lv =  sparse.vstack((a,b))
 
- 
+
     ux_uy_bar = scipy.sparse.block_diag([ux_uys[i] for i in range(t_end-1)])#.toarray()
 
-    Lv_bar = scipy.sparse.block_diag([Lv for i in range(t_end-1)])#.toarray() 
+    Lv_bar = scipy.sparse.block_diag([Lv for i in range(t_end-1)])#.toarray()
     ut_bar = vectorize_func(np.array(uts))
 
     if v_true is not None:
         v_true = vec(np.array([v.reshape(v.size) for v in v_true])).reshape((vec(np.array([v.reshape(v.size) for v in v_true])).size,1))
-    
+
     # print(np.isnan(ux_uy_bar.toarray()).any())
-    (v_ests_, info) = MMGKS(ux_uy_bar, -ut_bar.reshape((len(ut_bar),1)), Lv_bar, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv', 
+    (v_ests_, info) = MMGKS(ux_uy_bar, -ut_bar.reshape((len(ut_bar),1)), Lv_bar, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv',
                         x_true=v_true, tqdm_ = False)
 
     return ([np.rint(v_ests_)[(len(v_ests_)//(t_end-1))*t:(len(v_ests_)//(t_end-1)*(t+1))].reshape(nx,ny,2) for t in range(t_end-1)],info)
@@ -98,14 +98,17 @@ def solve_opt_flow(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reduction =
     nx=shape[0];ny=shape[1]
     R = np.array(list(np.ndindex(*shape)))
     kernel_x = np.zeros((2*v_max+1,2*v_max+1))
-    kernel_x[:,0] = -1 
-    kernel_x[:,-1] = 1 
-    kernel_y = kernel_x.T 
+    kernel_x[:,0] = -1
+    kernel_x[:,-1] = 1
+    kernel_y = kernel_x.T
     kernel_t = np.ones((2*v_max+1,2*v_max+1))
     u_traj = deepcopy(u_traj)
 
     u_traj_  = deepcopy(u_traj)
     Ls = []
+
+    ux_history = []
+    uy_history = []
 
     for i in range(len(u_traj)-1):
 
@@ -129,24 +132,26 @@ def solve_opt_flow(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reduction =
 
         uy = -vec(signal.convolve2d(u_traj[i], kernel_x, boundary='symm', mode='same'))/(delta_x*2*kernel_x.shape[0])
         ux = -vec(signal.convolve2d(u_traj[i], kernel_y, boundary='symm', mode='same'))/(delta_y*2*kernel_y.shape[0])
+        ux_history.append(ux)
+        uy_history.append(uy)
 
         if i == 0:
             ut = vec(signal.convolve2d(u_traj[i+1], kernel_t, boundary='symm', mode='same') - signal.convolve2d(u_traj[i], kernel_t, boundary='symm', mode='same'))/(kernel_t.size)
-        else: 
+        else:
             ut = vec(signal.convolve2d(u_traj[i+1], kernel_t, boundary='symm', mode='same') - signal.convolve2d(u_traj[i-1], kernel_t, boundary='symm', mode='same'))/(2*kernel_t.size)
-            
+
         Li = []
-        for i in range(nx_*ny_): 
+        for i in range(nx_*ny_):
             Li.append((ux[i],uy[i],ut[i]))
         Li = np.array(Li)
         Ls.append(Li)
 
     L = gen_first_derivative_operator_2D(nx_,ny_)
-    # a=np.zeros((L.[0],2*L.[1])) 
+    # a=np.zeros((L.[0],2*L.[1]))
     from scipy.sparse import csr_matrix
     a = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     a[:,::2] = L
-    # b=np.zeros((L.[0],2*L.shape[1])) 
+    # b=np.zeros((L.[0],2*L.shape[1]))
     b = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     b[:,1::2] = L
     Lv =  sparse.vstack((a,b))
@@ -164,7 +169,7 @@ def solve_opt_flow(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reduction =
 
         ux_uy = scipy.linalg.block_diag(*[np.array([Lx[i], Ly[i]]) for i in range(nx_*ny_)])
         ut = Lt
-        (v_est, info) = MMGKS_2(ux_uy, -ut.reshape((len(ut),1)), Lv, pnorm=pnorm, qnorm=qnorm, projection_dim=proj_dim, n_iter=n_iter, regparam='gcv', 
+        (v_est, info) = MMGKS_2(ux_uy, -ut.reshape((len(ut),1)), Lv, pnorm=pnorm, qnorm=qnorm, projection_dim=proj_dim, n_iter=n_iter, regparam='gcv',
                         x_true=v_true, tqdm_ = False)
         v_est = v_est.reshape(nx_*ny_,2)
         v_large = np.zeros((nx,nx,2))
@@ -188,7 +193,7 @@ def solve_opt_flow(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reduction =
         v_larges.append(v_large)
         ux_uy_history.append(ux_uy)
         ut_history.append(ut)
-    return (v_ests, v_larges, info, ux_uy_history, ut_history)
+    return (v_ests, v_larges, info, ux_history, uy_history, ux_uy_history, ut_history)
 
 
 def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
@@ -199,9 +204,9 @@ def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
     nx=shape[0];ny=shape[1]
     R = np.array(list(np.ndindex(*shape)))
     kernel_x = np.zeros((2*v_max+1,2*v_max+1))
-    kernel_x[:,0] = -1 
-    kernel_x[:,-1] = 1 
-    kernel_y = kernel_x.T 
+    kernel_x[:,0] = -1
+    kernel_x[:,-1] = 1
+    kernel_y = kernel_x.T
     kernel_t = np.ones((2*v_max+1,2*v_max+1))
 
 
@@ -216,7 +221,7 @@ def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
 
         ut = vec(signal.convolve2d(u_traj[i+1], kernel_t, boundary='symm', mode='same') - signal.convolve2d(u_traj[i], kernel_t, boundary='symm', mode='same'))/(kernel_t.size)
         Li = []
-        for i in range(nx*ny): 
+        for i in range(nx*ny):
             Li.append((ux[i],uy[i],ut[i]))
         Li = np.array(Li)
         Ls.append(Li)
@@ -232,26 +237,26 @@ def solve_opt_flow_joint(u_traj,shape,t_end,v_true,v_max = 2, n_iter = 60):
 
     # L = gen_first_derivative_operator_2D(nx,ny)
     L = gen_2D(nx,ny)
-    a=np.zeros((L.shape[0],2*L.shape[1])) 
+    a=np.zeros((L.shape[0],2*L.shape[1]))
     from scipy.sparse import csr_matrix
     a = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     a[:,::2] = L
-    b=np.zeros((L.shape[0],2*L.shape[1])) 
+    b=np.zeros((L.shape[0],2*L.shape[1]))
     b = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     b[:,1::2] = L
     Lv =  sparse.vstack((a,b))
 
- 
+
     ux_uy_bar = scipy.sparse.block_diag([ux_uys[i] for i in range(t_end-1)])#.toarray()
 
-    Lv_bar = scipy.sparse.block_diag([Lv for i in range(t_end-1)])#.toarray() 
+    Lv_bar = scipy.sparse.block_diag([Lv for i in range(t_end-1)])#.toarray()
     ut_bar = vectorize_func(np.array(uts))
 
     if v_true is not None:
         v_true = vec(np.array([v.reshape(v.size) for v in v_true])).reshape((vec(np.array([v.reshape(v.size) for v in v_true])).size,1))
-    
+
     # print(np.isnan(ux_uy_bar.toarray()).any())
-    (v_ests_, info) = MMGKS(ux_uy_bar, -ut_bar.reshape((len(ut_bar),1)), Lv_bar, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv', 
+    (v_ests_, info) = MMGKS(ux_uy_bar, -ut_bar.reshape((len(ut_bar),1)), Lv_bar, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv',
                         x_true=v_true, tqdm_ = False)
 
     return ([np.rint(v_ests_)[(len(v_ests_)//(t_end-1))*t:(len(v_ests_)//(t_end-1)*(t+1))].reshape(nx,ny,2) for t in range(t_end-1)],info)
@@ -271,9 +276,9 @@ def solve_opt_flow_new(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reducti
     nx=shape[0];ny=shape[1]
     R = np.array(list(np.ndindex(*shape)))
     kernel_x = np.zeros((2*v_max+1,2*v_max+1))
-    kernel_x[:,0] = -1 
-    kernel_x[:,-1] = 1 
-    kernel_y = kernel_x.T 
+    kernel_x[:,0] = -1
+    kernel_x[:,-1] = 1
+    kernel_y = kernel_x.T
     kernel_t = np.ones((2*v_max+1,2*v_max+1))
     u_traj = deepcopy(u_traj)
 
@@ -305,17 +310,17 @@ def solve_opt_flow_new(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reducti
 
         ut = vec(signal.convolve2d(u_traj[i+1], kernel_t, boundary='symm', mode='same') - signal.convolve2d(u_traj[i], kernel_t, boundary='symm', mode='same'))/(kernel_t.size)
         Li = []
-        for i in range(nx_*ny_): 
+        for i in range(nx_*ny_):
             Li.append((ux[i],uy[i],ut[i]))
         Li = np.array(Li)
         Ls.append(Li)
 
     L = gen_first_derivative_operator_2D(nx_,ny_)
-    # a=np.zeros((L.[0],2*L.[1])) 
+    # a=np.zeros((L.[0],2*L.[1]))
     from scipy.sparse import csr_matrix
     a = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     a[:,::2] = L
-    # b=np.zeros((L.[0],2*L.shape[1])) 
+    # b=np.zeros((L.[0],2*L.shape[1]))
     b = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     b[:,1::2] = L
     Lv =  sparse.vstack((a,b))
@@ -332,7 +337,7 @@ def solve_opt_flow_new(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60,reducti
 
         ux_uy = scipy.linalg.block_diag(*[np.array([Lx[i], Ly[i]]) for i in range(nx_*ny_)])
         ut = Lt
-        (v_est, info) = MMGKS(ux_uy, -ut.reshape((len(ut),1)), Lv, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv', 
+        (v_est, info) = MMGKS(ux_uy, -ut.reshape((len(ut),1)), Lv, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv',
                         x_true=v_true, tqdm_ = False)
         v_est = v_est.reshape(nx_*ny_,2)
         v_large = np.zeros((nx,nx,2))
@@ -366,9 +371,9 @@ def solve_opt_flow_(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60):
     nx=shape[0];ny=shape[1]
     R = np.array(list(np.ndindex(*shape)))
     kernel_x = np.zeros((2*v_max+1,2*v_max+1))
-    kernel_x[:,0] = -1 
-    kernel_x[:,-1] = 1 
-    kernel_y = kernel_x.T 
+    kernel_x[:,0] = -1
+    kernel_x[:,-1] = 1
+    kernel_y = kernel_x.T
     kernel_t = np.ones((2*v_max+1,2*v_max+1))
 
 
@@ -383,17 +388,17 @@ def solve_opt_flow_(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60):
 
         ut = vec(signal.convolve2d(u_traj[i+1], kernel_t, boundary='symm', mode='same') - signal.convolve2d(u_traj[i], kernel_t, boundary='symm', mode='same'))/(kernel_t.size)
         Li = []
-        for i in range(nx*ny): 
+        for i in range(nx*ny):
             Li.append((ux[i],uy[i],ut[i]))
         Li = np.array(Li)
         Ls.append(Li)
 
     L = gen_first_derivative_operator_2D(nx,ny)
-    # a=np.zeros((L.shape[0],2*L.shape[1])) 
+    # a=np.zeros((L.shape[0],2*L.shape[1]))
     from scipy.sparse import csr_matrix
     a = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     a[:,::2] = L
-    # b=np.zeros((L.shape[0],2*L.shape[1])) 
+    # b=np.zeros((L.shape[0],2*L.shape[1]))
     b = csr_matrix((L.shape[0],2*L.shape[1]))#.toarray()
     b[:,1::2] = L
     Lv =  sparse.vstack((a,b))
@@ -409,7 +414,7 @@ def solve_opt_flow_(u_traj,shape,t_end,v_trues,v_max = 2, n_iter = 60):
 
         ux_uy = scipy.linalg.block_diag(*[np.array([Lx[i], Ly[i]]) for i in range(size**2)])
         ut = Lt
-        (v_est, info) = MMGKS(ux_uy, -ut.reshape((len(ut),1)), Lv, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv', 
+        (v_est, info) = MMGKS(ux_uy, -ut.reshape((len(ut),1)), Lv, pnorm=2, qnorm=1, projection_dim=1, n_iter=n_iter, regparam='gcv',
                         x_true=v_true, tqdm_ = False)
 
         v_est = v_est.reshape((nx,ny,2))

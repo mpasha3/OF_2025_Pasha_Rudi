@@ -27,37 +27,37 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
     residual_history = []
     e = 1
     x = A.T @ b # initialize x for reweighting
-    
+
     AV = A@V
     LV = L@V
     IV = I@V
-    
+
     for ii in tqdm(range(n_iter), desc='running MMGKS...'):
         # compute reweighting for p-norm approximation
         v = A @ x - b
-        
+
         x_ = x.reshape((-1,))
 
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-        if vs_true is not None: 
-            v_ests = vs_true 
+        if vs_true is not None:
+            v_ests = vs_true
 
-        else: 
+        else:
             _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, scale = scale) #solve_opt_flow(x_traj,shape,t_end)
             v_ests = (np.array(v_ests))
-            
+
         M_x=[x_[(t_end-1)*(x_.shape[0]//t_end):t_end*(x_.shape[0]//t_end)]]
         v_primes_=[]
-        for t in range (t_end-1): 
+        for t in range (t_end-1):
             M_x_v_prime =   M(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
             M_x.append(M_x_v_prime[0])
             v_primes_.append(M_x_v_prime[1])
@@ -69,29 +69,29 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
         x_inv_traj = x_traj[::-1]
-        if v_primes_true is not None: 
+        if v_primes_true is not None:
             v_inv_ests = v_primes_true
-        else: 
+        else:
             v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
             v_inv_ests = (np.array(v_inv_ests))
 
         vel_shape = (nx,ny, 2)
         M_inv_x=[x_[0:1*(x_.shape[0]//t_end)]]
-        for t in range (t_end-1):   
+        for t in range (t_end-1):
             M_inv_x.append(M(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
         M_inv_x = np.array(M_inv_x)
         M_inv_X = vectorize_func(M_inv_x).reshape((-1,1))
-        
-        
+
+
         z = I@x - M_X
-        
+
         z_inv = I@x - M_inv_X
-        
+
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))**(1/2)
         wm = ((z**2 + epsilon**2)**(rnorm/2 - 1))**(1/2)
         wm_inv = ((z_inv**2 + epsilon**2)**(rnorm/2 - 1))**(1/2)
-        
+
         AA = AV*wf
         II = IV*wm
         II_inv = IV*wm_inv
@@ -100,19 +100,19 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         (Q_I, R_I) = la.qr(II, mode='economic') # Project I into V, separate into Q and R
         (Q_I_inv, R_I_inv) = la.qr(II_inv, mode='economic') # Project I into V, separate into Q and R
         # Compute reweighting for q-norm approximation
-        
+
         u = L @ x
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))**(1/2)
         LL = LV * wr
         (Q_L, R_L) = la.qr(LL, mode='economic') # Project L into V, separate into Q and R
 
 
-       
+
         LLIIII = np.concatenate((LL,II,II_inv))
         (Q_LII, R_LII) = la.qr(LLIIII, mode='economic')
 
         b_ = np.concatenate((np.zeros((LL.shape[0],1)), wm* M_X, wm_inv* M_inv_X))
-       
+
         if regparam == 'gcv':
             lambdah = generalized_crossvalidation_ext(Q_A, R_A, Q_LII, R_LII, b, b_, **kwargs)#['x'].item() # find ideal lambda by crossvalidation
             alpha = lambdah
@@ -121,25 +121,25 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         lambda_history.append(lambdah)
 
         y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L, np.sqrt(alpha) * R_I
-                                                , np.sqrt(beta) * R_I_inv)), 
+                                                , np.sqrt(beta) * R_I_inv)),
                   np.concatenate((Q_A.T@ (wf* b), np.zeros((R_L.shape[0],1)),np.sqrt(alpha)*Q_I.T@ (wm* M_X),
                                  np.sqrt(beta)*Q_I_inv.T@ (wm_inv* M_inv_X))),rcond=None)
         x = V @ y # project y back
-    
+
         x_history.append(x)
-        
+
         if (ii >= R_L.shape[0]):
             break
         v = AV@y
         v = v - b
         u = LV @ y
-        
+
         z = IV@y
         z = z - M_X
-        
+
         z_inv = IV@y
         z_inv = z_inv - M_inv_X
-        
+
         ra = (wf**2) * (AV @ y - b)
         ra = A.T @ ra
         rb = (wr**2) * (LV @ y)
@@ -149,16 +149,16 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         r = ra + lambdah * rb + alpha*rc + beta*rd
         r = r - V @ (V.T @ r)
         r = r - V @ (V.T @ r)
-        
+
         normed_r = r / la.norm(r) # normalize residual
         vn = r / np.linalg.norm(r)
         V = np.column_stack((V, vn))
         Avn = A @ vn
         AV = np.column_stack((AV, Avn))
-        
+
         Ivn = I @ vn
         IV = np.column_stack((IV, Ivn))
-        
+
         Lvn = vn
         Lvn = L*vn
         LV = np.column_stack((LV, Lvn))
@@ -169,7 +169,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'relError': rre_history, 'Residual': residual_history, 'its': ii}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
+
     return (x, info, v_ests, v_inv_ests)
 
 
@@ -200,7 +200,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
@@ -209,25 +209,25 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     x = A.T @ b # initialize x for reweighting
     L = scipy.sparse.vstack((L_,I,I)) #np.concatenate((L_@I.toarray(),I.toarray(),I.toarray()))
     # L = scipy.sparse.csr_matrix(L)
-    
+
     for ii in tqdm(range(n_iter), desc='running MMGKS...'):
         # compute reweighting for p-norm approximation
         v = A @ x - b
-        
+
         x_ = x.reshape((-1,))
 
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-        if vs_true is not None: 
-            v_ests = vs_true 
+        if vs_true is not None:
+            v_ests = vs_true
 
-        else: 
+        else:
             _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, scale = scale, qnorm = qnorm_opt) #solve_opt_flow(x_traj,shape,t_end)
             v_ests = (np.array(v_ests))
         M_x=[x_[(t_end-1)*(x_.shape[0]//t_end):t_end*(x_.shape[0]//t_end)]]
         v_primes_=[]
-        for t in range (t_end-1): 
+        for t in range (t_end-1):
             M_x_v_prime =   M(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
             M_x.append(M_x_v_prime[0])
             v_primes_.append(M_x_v_prime[1])
@@ -239,25 +239,25 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
         x_inv_traj = x_traj[::-1]
-        if v_primes_true is not None: 
+        if v_primes_true is not None:
             v_inv_ests = v_primes_true
-        else: 
+        else:
             v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
             v_inv_ests = (np.array(v_inv_ests))
 
         vel_shape = (nx,ny, 2)
         M_inv_x=[x_[0:1*(x_.shape[0]//t_end)]]
-        for t in range (t_end-1):   
+        for t in range (t_end-1):
             M_inv_x.append(M(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
         M_inv_x = np.array(M_inv_x)
         M_inv_X = vectorize_func(M_inv_x).reshape((-1,1))
-        
+
         b_ = np.concatenate((np.zeros((L_.shape[0],1)),M_X,M_inv_X))
 
         AV = A@V
         LV = L@V
-        
+
         v = A @ x - b
 
         # print(x.shape,L.shape,b_.shape)
@@ -266,14 +266,14 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))
 
-        
+
         AA = AV*(wf**(1/2))
 
 
         (Q_A, R_A) = la.qr(AA, mode='economic') # Project A into V, separate into Q and R
 
         # Compute reweighting for q-norm approximation
-        
+
         u = L @ x
         if isoTV_option in ['isoTV', 'ISOTV', 'IsoTV']:
             if prob_dims == False:
@@ -311,22 +311,22 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         # Compute the projected rhs
         bhat = (Q_A.T @ b).reshape(-1,1)
-    
 
-       
+
+
         if regparam == 'gcv':
             lambdah = generalized_crossvalidation_ext(Q_A, R_A, Q_L, R_L, b, b_, **kwargs)#['x'].item() # find ideal lambda by crossvalidation
 
 
         lambda_history.append(lambdah)
 
-        y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), 
+        y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)),
                   np.concatenate((Q_A.T@ ((wf**1)* b), np.sqrt(lambdah)*Q_L.T@ ((wr**1)* b_))),rcond=None)
 
         x = V @ y # project y back
-    
+
         x_history.append(x)
-        
+
         if (ii >= R_L.shape[0]):
             break
         v = AV@y
@@ -339,15 +339,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         rb = (wr**1) * (LV @ y - b_)
         rb = L.T @ rb
 
-        r = ra + lambdah * rb 
-        
+        r = ra + lambdah * rb
+
         normed_r = r / la.norm(r) # normalize residual
         vn = r / np.linalg.norm(r)
         V = np.column_stack((V, vn))
         Avn = A @ vn
         AV = np.column_stack((AV, Avn))
 
-        
+
         Lvn = vn
         Lvn = L*vn
         LV = np.column_stack((LV, Lvn))
@@ -358,7 +358,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'relError': rre_history, 'Residual': residual_history, 'its': ii}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
+
     return (x, info, v_ests, v_inv_ests)
 
 
@@ -368,16 +368,16 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
 
     epsilon = kwargs['epsilon'] if ('epsilon' in kwargs) else 0.1
     (U, B, V) = golub_kahan_2(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     residual_history = []
     e = 1
-    x = A.T @ b 
+    x = A.T @ b
     AV = A@V
     LV = L@V
 
-    
+
     for ii in tqdm(range(n_iter), desc='running MMGKS...'):
         # y= la.pinv(V)@x
         v = A @ x - b
@@ -385,13 +385,13 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
 
 
         AA = AV*wf
-        (Q_A, R_A) = la.qr(AA, mode='economic') 
+        (Q_A, R_A) = la.qr(AA, mode='economic')
         # g= np.linalg.lstsq(R_A,Q_A.T@b)[0]
-        u =(L @ x) #*(1/la.norm(L@(V@g),1)) 
-        
+        u =(L @ x) #*(1/la.norm(L@(V@g),1))
+
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL = LV * wr
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
+        (Q_L, R_L) = la.qr(LL, mode='economic')
         if regparam == 'dp':
             lambdah = discrepancy_principle(Q_A, R_A, R_L, wf *b, **kwargs)
             w2 = lambdah
@@ -404,12 +404,12 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
             f_max = 1
             g_max = 1
             y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
-        elif regparam == 'new': 
-                
-            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)), 
+        elif regparam == 'new':
+
+            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
-            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)), 
+            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)),
                             np.concatenate(((min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
 
@@ -420,13 +420,13 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
             LL = LL/np.sqrt(g_max)
             b_=b/np.sqrt(f_max)
 
-            (Q_A, R_A) = la.qr(AA, mode='economic') 
+            (Q_A, R_A) = la.qr(AA, mode='economic')
             (Q_L, R_L) = la.qr(LL, mode='economic')
-            
+
             lambdah = gg(AA,Q_A,R_A,b,LL,Q_L,R_L,np.zeros((L.shape[0],1)))
             w1 = 1
             w2 = lambdah**2
-            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)), 
+            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)),
                         np.concatenate((w1*Q_A.T@ b_, (lambdah) *np.zeros((R_L.shape[0],1)))),rcond=None)
         else:
             lambdah = regparam
@@ -434,7 +434,7 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
 
 
         x = V @ y
-        
+
         if (non_neg):
             x[x<0] = 0
         x_history.append(x)
@@ -449,7 +449,7 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
 
         w1 = 1
 
-        
+
         r = w1**2* ra + w2 * rb
         r = r - V @ (V.T @ r)
         r = r - V @ (V.T @ r)
@@ -468,7 +468,7 @@ def MMGKS2(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv'
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'relError': rre_history, 'Residual': residual_history, 'its': ii}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
+
     return (x, info)
 
 
@@ -497,7 +497,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
@@ -512,15 +512,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
-        if vs_true is not None: 
-            v_ests = vs_true 
-        else: 
+        if vs_true is not None:
+            v_ests = vs_true
+        else:
             _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, scale = scale,qnorm=qnorm_opt,proj_dim=proj_dim_opt) #solve_opt_flow(x_traj,shape,t_end)
             v_ests = (np.array(v_ests))
 
         Ms = []
         v_primes_=[]
-        for t in range (t_end-1): 
+        for t in range (t_end-1):
             M_v_prime =   M_mat(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
             Ms.append(M_v_prime[0])
             v_primes_.append(M_v_prime[1])
@@ -528,15 +528,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-        if v_primes_true is not None: 
+        if v_primes_true is not None:
             v_inv_ests = v_primes_true
-        else: 
+        else:
             v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
             v_inv_ests = (np.array(v_inv_ests))
 
         M_primes = [x_[0:1*(x_.shape[0]//t_end)]]
         M_primes = []
-        for t in range (t_end-1):   
+        for t in range (t_end-1):
             M_primes.append(M_mat(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
         I1 = scipy.sparse.identity(nx*ny)
@@ -556,23 +556,23 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         v = A @ x - b
         u = L_@x
         z= M@x
-        
-        
+
+
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))
         AA = AV*(wf**(1/2))
         (Q_A, R_A) = la.qr(AA, mode='economic')
-        
+
         wm = ((z**2 + epsilon**2)**(rnorm/2 - 1))
         MM = MV * wm
-        
-        
+
+
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL_ = LV_ * wr
-        
-        LL = np.concatenate((LL_,MM))
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
 
-            
+        LL = np.concatenate((LL_,MM))
+        (Q_L, R_L) = la.qr(LL, mode='economic')
+
+
         if regparam == 'dp':
             lambdah = discrepancy_principle(Q_A, R_A, R_L, wf *b, **kwargs)
             w2 = lambdah
@@ -585,12 +585,12 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             f_max = 1
             g_max = 1
             y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
-        elif regparam == 'new': 
-                
-            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)), 
+        elif regparam == 'new':
+
+            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
-            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)), 
+            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)),
                             np.concatenate(((min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
 
@@ -601,13 +601,13 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             LL = LL/np.sqrt(g_max)
             b_=b/np.sqrt(f_max)
 
-            (Q_A, R_A) = la.qr(AA, mode='economic') 
+            (Q_A, R_A) = la.qr(AA, mode='economic')
             (Q_L, R_L) = la.qr(LL, mode='economic')
-            
+
             lambdah = gg(AA,Q_A,R_A,b,LL,Q_L,R_L,np.zeros((LL.shape[0],1)))
             w1 = 1
             w2 = lambdah**2
-            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)), 
+            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)),
                         np.concatenate((w1*Q_A.T@ b_, (lambdah) *np.zeros((R_L.shape[0],1)))),rcond=None)
         else:
             lambdah = regparam
@@ -615,7 +615,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
 
         x = V @ y
-        
+
         if (non_neg):
             x[x<0] = 0
         x_history.append(x)
@@ -652,7 +652,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history,'regParam2_history': alpha_history, 'relError': rre_history, 'Residual': residual_history, 'its': ii,'Ms':Ms}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
+
     return (x, info, v_ests, v_inv_ests)
 
 
@@ -681,7 +681,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
@@ -696,15 +696,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
-        if vs_true is not None: 
-            v_ests = vs_true 
-        else: 
+        if vs_true is not None:
+            v_ests = vs_true
+        else:
             _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, scale = scale,qnorm=qnorm_opt,proj_dim=proj_dim_opt) #solve_opt_flow(x_traj,shape,t_end)
             v_ests = (np.array(v_ests))
 
         Ms = []
         v_primes_=[]
-        for t in range (t_end-1): 
+        for t in range (t_end-1):
             M_v_prime =   M_mat(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
             Ms.append(M_v_prime[0])
             v_primes_.append(M_v_prime[1])
@@ -712,15 +712,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-        if v_primes_true is not None: 
+        if v_primes_true is not None:
             v_inv_ests = v_primes_true
-        else: 
+        else:
             v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
             v_inv_ests = (np.array(v_inv_ests))
 
         M_primes = [x_[0:1*(x_.shape[0]//t_end)]]
         M_primes = []
-        for t in range (t_end-1):   
+        for t in range (t_end-1):
             M_primes.append(M_mat(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
         I1 = scipy.sparse.identity(nx*ny)
@@ -740,24 +740,24 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         v = A @ x - b
         u = L_@x
         z= M@x
-        
-        
+
+
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))
         AA = AV*(wf**(1/2))
         (Q_A, R_A) = la.qr(AA, mode='economic')
-        
+
         wm = ((z**2 + epsilon**2)**(rnorm/2 - 1))
         MM = MV * wm
-        (Q_M, R_M) = la.qr(MM, mode='economic') 
-        
+        (Q_M, R_M) = la.qr(MM, mode='economic')
+
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL_ = LV_ * wr
         (Q_L_, R_L_) = la.qr(LL_, mode='economic')
-        
-        LL = np.concatenate((LL_,MM))
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
 
-            
+        LL = np.concatenate((LL_,MM))
+        (Q_L, R_L) = la.qr(LL, mode='economic')
+
+
         if regparam == 'dp':
             lambdah = discrepancy_principle(Q_A, R_A, R_L, wf *b, **kwargs)
             w2 = lambdah
@@ -772,17 +772,17 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             g_max = 1
             h_max =1
             y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
-        elif regparam == 'new': 
-                
-            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L_)), 
+        elif regparam == 'new':
+
+            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L_)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_L_.shape[0],1)))),rcond=None) [0]
-            
-            x3 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_M)), 
+
+            x3 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_M)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_M.shape[0],1)))),rcond=None) [0]
 
-            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)), 
+            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)),
                             np.concatenate(((min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
-        
+
             f_max = la.norm(AA@x1-b)**2
             g_max = la.norm(LL_@x2)**2
 
@@ -793,10 +793,10 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             MM = MM/np.sqrt(h_max)
             b_=b/np.sqrt(f_max)
 
-            (Q_A, R_A) = la.qr(AA, mode='economic') 
+            (Q_A, R_A) = la.qr(AA, mode='economic')
             (Q_L_, R_L_) = la.qr(LL_, mode='economic')
             (Q_M, R_M) = la.qr(MM, mode='economic')
-            
+
             lambdah = gg(AA,Q_A,R_A,b,LL_,Q_L_,R_L_,np.zeros((LL_.shape[0],1)))
 
             alpha = gg(AA,Q_A,R_A,b,MM,Q_M,R_M,np.zeros((MM.shape[0],1)))
@@ -808,16 +808,16 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             w3 = alpha**2
 
 
-            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L_, alpha*R_M)), 
+            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L_, alpha*R_M)),
                         np.concatenate((w1*Q_A.T@ b_, (lambdah) *np.zeros((R_L_.shape[0],1)), alpha*np.zeros((R_M.shape[0],1)))),rcond=None)
         else:
             lambdah = regparam
         lambda_history.append(lambdah)
-        
+
 
 
         x = V @ y
-        
+
         if (non_neg):
             x[x<0] = 0
         x_history.append(x)
@@ -858,7 +858,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
 
 
-    
+
     return (x, info, v_ests, v_inv_ests)
 
 
@@ -887,7 +887,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan_2(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
@@ -902,16 +902,16 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
-        if vs_true is not None: 
-            v_ests = vs_true 
-        else: 
-            _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, 
+        if vs_true is not None:
+            v_ests = vs_true
+        else:
+            _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction,
                                         scale = scale,pnorm=pnorm_opt,qnorm=qnorm_opt,proj_dim=proj_dim_opt) #solve_opt_flow(x_traj,shape,t_end)
             v_ests = np.rint(np.array(v_ests))
 
         Ms = []
         v_primes_=[]
-        for t in range (t_end-1): 
+        for t in range (t_end-1):
             M_v_prime =   M_mat(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
             Ms.append(M_v_prime[0])
             v_primes_.append(M_v_prime[1])
@@ -919,15 +919,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-        if v_primes_true is not None: 
+        if v_primes_true is not None:
             v_inv_ests = v_primes_true
-        else: 
+        else:
             v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
             v_inv_ests = np.rint(np.array(v_inv_ests))
 
         M_primes = [x_[0:1*(x_.shape[0]//t_end)]]
         M_primes = []
-        for t in range (t_end-1):   
+        for t in range (t_end-1):
             M_primes.append(M_mat(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
         I1 = scipy.sparse.identity(nx*ny)
@@ -947,23 +947,23 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         v = A @ x - b
         u = L_@x
         z= M@x
-        
-        
+
+
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))
         AA = AV*(wf**(1/2))
         (Q_A, R_A) = la.qr(AA, mode='economic')
-        
+
         wm = ((z**2 + epsilon**2)**(rnorm/2 - 1))
         MM = MV * wm
-        
-        
+
+
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL_ = LV_ * wr
-        
-        LL = np.concatenate((LL_,MM))
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
 
-            
+        LL = np.concatenate((LL_,MM))
+        (Q_L, R_L) = la.qr(LL, mode='economic')
+
+
         if regparam == 'dp':
             lambdah = discrepancy_principle(Q_A, R_A, R_L, wf *b, **kwargs)
             w2 = lambdah
@@ -976,12 +976,12 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             f_max = 1
             g_max = 1
             y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
-        elif regparam == 'new': 
-                
-            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)), 
+        elif regparam == 'new':
+
+            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
-            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)), 
+            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)),
                             np.concatenate(((min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
 
@@ -992,13 +992,13 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             LL = LL/np.sqrt(g_max)
             b_=b/np.sqrt(f_max)
 
-            (Q_A, R_A) = la.qr(AA, mode='economic') 
+            (Q_A, R_A) = la.qr(AA, mode='economic')
             (Q_L, R_L) = la.qr(LL, mode='economic')
-            
+
             lambdah = gg(AA,Q_A,R_A,b_,LL,Q_L,R_L,np.zeros((LL.shape[0],1)))
             w1 = 1
             w2 = lambdah**2
-            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)), 
+            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)),
                         np.concatenate((w1*Q_A.T@ b_, (lambdah) *np.zeros((R_L.shape[0],1)))),rcond=None)
         else:
             lambdah = regparam
@@ -1006,7 +1006,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
 
         x = V @ y
-        
+
         if (non_neg):
             x[x<0] = 0
         x_history.append(x)
@@ -1043,7 +1043,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history,'regParam2_history': alpha_history, 'relError': rre_history, 'Residual': residual_history, 'its': ii,'Ms':Ms}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
+
     return (x, info, v_ests, v_inv_ests)
 
 def MMGKS_dyn2(A, b, L_,I, t_end,shape,pnorm=2, qnorm=1, rnorm= 1, projection_dim=3, n_iter=5, n_iter_b=60,
@@ -1071,7 +1071,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
@@ -1086,15 +1086,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
-        if vs_true is not None: 
-            v_ests = vs_true 
-        else: 
+        if vs_true is not None:
+            v_ests = vs_true
+        else:
             _,v_ests,_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, scale = scale,qnorm=qnorm_opt,proj_dim=proj_dim_opt) #solve_opt_flow(x_traj,shape,t_end)
             v_ests = (np.array(v_ests))
 
         Ms = []
         v_primes_=[]
-        for t in range (t_end-1): 
+        for t in range (t_end-1):
             M_v_prime =   M_mat(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
             Ms.append(M_v_prime[0])
             v_primes_.append(M_v_prime[1])
@@ -1102,15 +1102,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-        if v_primes_true is not None: 
+        if v_primes_true is not None:
             v_inv_ests = v_primes_true
-        else: 
+        else:
             v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
             v_inv_ests = (np.array(v_inv_ests))
 
         M_primes = [x_[0:1*(x_.shape[0]//t_end)]]
         M_primes = []
-        for t in range (t_end-1):   
+        for t in range (t_end-1):
             M_primes.append(M_mat(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
         I1 = scipy.sparse.identity(nx*ny)
@@ -1130,24 +1130,24 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         v = A @ x - b
         u = L_@x
         z= M@x
-        
-        
+
+
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))
         AA = AV*(wf**(1/2))
         (Q_A, R_A) = la.qr(AA, mode='economic')
-        
+
         wm = ((z**2 + epsilon**2)**(rnorm/2 - 1))
         MM = MV * wm
-        (Q_M, R_M) = la.qr(MM, mode='economic') 
-        
+        (Q_M, R_M) = la.qr(MM, mode='economic')
+
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL_ = LV_ * wr
         (Q_L_, R_L_) = la.qr(LL_, mode='economic')
-        
-        LL = np.concatenate((LL_,MM))
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
 
-            
+        LL = np.concatenate((LL_,MM))
+        (Q_L, R_L) = la.qr(LL, mode='economic')
+
+
         if regparam == 'dp':
             lambdah = discrepancy_principle(Q_A, R_A, R_L, wf *b, **kwargs)
             w2 = lambdah
@@ -1162,14 +1162,14 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             g_max = 1
             h_max =1
             y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
-        elif regparam == 'new': 
-                
-            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L_)), 
+        elif regparam == 'new':
+
+            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L_)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_L_.shape[0],1)))),rcond=None) [0]
-            
-            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L_)), 
+
+            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L_)),
                             np.concatenate(((min_l)*Q_A.T@ b, np.zeros((R_L_.shape[0],1)))),rcond=None) [0]
-        
+
             f_max = la.norm(AA@x1-b)**2
             g_max = la.norm(LL_@x2)**2
 
@@ -1178,24 +1178,24 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             LL_ = LL_/np.sqrt(g_max)
             b_=b/np.sqrt(f_max)
 
-            (Q_A, R_A) = la.qr(AA, mode='economic') 
+            (Q_A, R_A) = la.qr(AA, mode='economic')
             (Q_L_, R_L_) = la.qr(LL_, mode='economic')
 
-            
+
             lambdah = gg(AA,Q_A,R_A,b_,LL_,Q_L_,R_L_,np.zeros((LL_.shape[0],1)))
 
-            
+
             AALL_ = np.concatenate((AA,lambdah*LL_))
             (Q_AL_, R_AL_) = la.qr(AALL_, mode='economic')
 
             b_2 = np.concatenate((b_,np.zeros((LL_.shape[0],1))))
 
-            x2_2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_AL_, (min_l)* R_M)), 
+            x2_2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_AL_, (min_l)* R_M)),
                             np.concatenate(((1-min_l)*Q_AL_.T@ b_2, np.zeros((R_M.shape[0],1)))),rcond=None) [0]
-            
-            x1_2 = np.linalg.lstsq(np.concatenate(((min_l)*R_AL_, (1-min_l)* R_M)), 
+
+            x1_2 = np.linalg.lstsq(np.concatenate(((min_l)*R_AL_, (1-min_l)* R_M)),
                             np.concatenate(((min_l)*Q_AL_.T@ b_2, np.zeros((R_M.shape[0],1)))),rcond=None) [0]
-            
+
             f_max_2 = la.norm(AALL_@x1_2-b_2)**2
             g_max_2 = la.norm(MM@x2_2)**2
 
@@ -1204,10 +1204,10 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             MM = MM/np.sqrt(g_max_2)
             b_2_=b_2/np.sqrt(f_max_2)
 
-            (Q_AL_, R_AL_) = la.qr(AALL_, mode='economic') 
+            (Q_AL_, R_AL_) = la.qr(AALL_, mode='economic')
             (Q_M, R_M) = la.qr(MM, mode='economic')
 
-            
+
             alpha = gg(AALL_,Q_AL_,R_AL_,b_2_,MM,Q_M,R_M,np.zeros((MM.shape[0],1)))
 
             alpha_history.append(alpha)
@@ -1217,16 +1217,16 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             w3 = alpha**2
 
 
-            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_AL_, alpha*R_M)), 
+            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_AL_, alpha*R_M)),
                         np.concatenate((w1*Q_AL_.T@ b_2_, alpha*np.zeros((R_M.shape[0],1)))),rcond=None)
         else:
             lambdah = regparam
         lambda_history.append(lambdah)
-        
+
 
 
         x = V @ y
-        
+
         if (non_neg):
             x[x<0] = 0
         x_history.append(x)
@@ -1267,7 +1267,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
 
 
-    
+
     return (x, info, v_ests, v_inv_ests)
 
 
@@ -1281,12 +1281,12 @@ def MMGKS_a(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv
     non_neg = kwargs['non_neg'] if ('non_neg' in kwargs) else False
     regparam_sequence = kwargs['regparam_sequence'] if ('regparam_sequence' in kwargs) else [0.1*(0.5**(x)) for x in range(0,n_iter)]
     (U, B, V) = golub_kahan(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     residual_history = []
     e = 1
-    x = A.T @ b 
+    x = A.T @ b
     AV = A@V
     if GS_option in  ['GS', 'gs', 'Gs']:
         nx = prob_dims[0]
@@ -1302,7 +1302,7 @@ def MMGKS_a(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv
         v = A @ x - b
         wf = (v**2 + epsilon**2)**(pnorm/2 - 1)
         AA = AV*wf
-        (Q_A, R_A) = la.qr(AA, mode='economic') 
+        (Q_A, R_A) = la.qr(AA, mode='economic')
         u = L @ x
         if isoTV_option in ['isoTV', 'ISOTV', 'IsoTV']:
             if prob_dims == False:
@@ -1338,7 +1338,7 @@ def MMGKS_a(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv
         else:
             wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL = LV * wr
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
+        (Q_L, R_L) = la.qr(LL, mode='economic')
         if regparam == 'gcv':
             lambdah = generalized_crossvalidation(Q_A, R_A, R_L, wf *b, **kwargs)
         elif regparam == 'dp':
@@ -1346,9 +1346,9 @@ def MMGKS_a(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv
 
         else:
             lambdah = regparam
-        
+
         lambda_history.append(lambdah)
-        y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), 
+        y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)),
                         np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
         x = V @ y
         x[x<0] = 0
@@ -1365,7 +1365,7 @@ def MMGKS_a(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv
         r = ra + lambdah * rb
         r = r - V @ (V.T @ r)
         r = r - V @ (V.T @ r)
-        normed_r = r / la.norm(r) 
+        normed_r = r / la.norm(r)
         vn = r / np.linalg.norm(r)
         V = np.column_stack((V, vn))
         Avn = A @ vn
@@ -1380,7 +1380,7 @@ def MMGKS_a(A, b, L, pnorm=2, qnorm=1, projection_dim=3, n_iter=5, regparam='gcv
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'relError': rre_history, 'Residual': residual_history, 'its': ii}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
+
     return (x, info)
 
 
@@ -1409,17 +1409,20 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     scale = kwargs['scale'] if ('scale' in kwargs) else 2
     reduction = kwargs['reduction'] if ('reduction' in kwargs) else False
     (U, B, V) = golub_kahan_2(A, b, projection_dim, dp_stop, **kwargs)
-    
+
     x_history = []
     lambda_history = []
     alpha_history = []
     residual_history = []
     M_history = []
     v_ests_history = []
+    ux_history = []
+    uy_history = []
     ux_uy_history = []
     ut_history = []
     e = 1
     x = A.T @ b # initialize x for reweighting
+    x_history.append(x)
 
     for ii in tqdm(range(n_iter), desc='running MMGKS...'):
         # compute reweighting for p-norm approximation
@@ -1428,19 +1431,21 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         len_=nx*ny
         x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
         if ((ii%interval == 0)):
-            if vs_true is not None: 
-                v_ests = vs_true 
-            else: 
+            if vs_true is not None:
+                v_ests = vs_true
+            else:
                 # (v_ests, v_larges, info, ux_uy_history, ut_history)
-                _,v_ests,_, ux_uy_, ut_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction, 
+                v_ests_small, v_ests, _, ux_, uy_, ux_uy_, ut_ = solve_opt_flow(x_traj,shape=shape,t_end=t_end,v_trues=None,v_max=v_max,n_iter=n_iter_b,reduction = reduction,
                                             scale = scale,pnorm=pnorm_opt,qnorm=qnorm_opt,proj_dim=proj_dim_opt) #solve_opt_flow(x_traj,shape,t_end)
                 v_ests = np.rint(np.array(v_ests))
-                v_ests_history.append(v_ests.reshape(-1,nx*ny*2))
+                v_ests_history.append(v_ests_small)
+                ux_history.append(ux_)
+                uy_history.append(uy_)
                 ux_uy_history.append(ux_uy_)
                 ut_history.append(ut_)
             Ms = []
             v_primes_=[]
-            for t in range (t_end-1): 
+            for t in range (t_end-1):
                 M_v_prime =   M_mat(im_func(x_[(t_end - t -1)*(x_.shape[0]//t_end):(t_end - t)*(x_.shape[0]//t_end)],shape), v_ests[::-1][t].reshape((nx,ny,2)))
                 Ms.append(M_v_prime[0])
                 v_primes_.append(M_v_prime[1])
@@ -1448,15 +1453,15 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
             x_traj = [x[len_*i:len_*(i+1)] for i in range(t_end)]
 
-            if v_primes_true is not None: 
+            if v_primes_true is not None:
                 v_inv_ests = v_primes_true
-            else: 
+            else:
                 v_inv_ests = v_primes_ #solve_opt_flow_b(x_inv_traj,shape,t_end,None,v_max,n_iter_b) #solve_opt_flow(x_inv_traj,shape,t_end)
                 v_inv_ests = np.rint(np.array(v_inv_ests))
 
             M_primes = [x_[0:1*(x_.shape[0]//t_end)]]
             M_primes = []
-            for t in range (t_end-1):   
+            for t in range (t_end-1):
                 M_primes.append(M_mat(im_func(x_[t*(x_.shape[0]//t_end):(t+1)*(x_.shape[0]//t_end)],shape), v_inv_ests[::-1][t].reshape((nx,ny,2)))[0])
 
             I1 = scipy.sparse.identity(nx*ny)
@@ -1476,23 +1481,23 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
         v = A @ x - b
         u = L_@x
         z= M@x
-        
-        
+
+
         wf = ((v**2 + epsilon**2)**(pnorm/2 - 1))
         AA = AV*(wf**(1/2))
         (Q_A, R_A) = la.qr(AA, mode='economic')
-        
+
         wm = ((z**2 + epsilon**2)**(rnorm/2 - 1))
         MM = MV * wm
-        
-        
+
+
         wr = smoothed_holder_weights(u, epsilon=epsilon, p=qnorm).reshape((-1,1))
         LL_ = LV_ * wr
-        
-        LL = np.concatenate((LL_,MM))
-        (Q_L, R_L) = la.qr(LL, mode='economic') 
 
-            
+        LL = np.concatenate((LL_,MM))
+        (Q_L, R_L) = la.qr(LL, mode='economic')
+
+
         if regparam == 'dp':
             lambdah = discrepancy_principle(Q_A, R_A, R_L, wf *b, **kwargs)
             w2 = lambdah
@@ -1505,12 +1510,12 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             f_max = 1
             g_max = 1
             y,_,_,_ = np.linalg.lstsq(np.concatenate((R_A, np.sqrt(lambdah) * R_L)), np.concatenate((Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None)
-        elif regparam == 'new': 
-                
-            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)), 
+        elif regparam == 'new':
+
+            x2 = np.linalg.lstsq(np.concatenate(((1-min_l)*R_A, (min_l)* R_L)),
                             np.concatenate(((1-min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
-            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)), 
+            x1 = np.linalg.lstsq(np.concatenate(((min_l)*R_A, (1-min_l)* R_L)),
                             np.concatenate(((min_l)*Q_A.T@ b, np.zeros((R_L.shape[0],1)))),rcond=None) [0]
 
 
@@ -1521,13 +1526,13 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
             LL = LL/np.sqrt(g_max)
             b_=b/np.sqrt(f_max)
 
-            (Q_A, R_A) = la.qr(AA, mode='economic') 
+            (Q_A, R_A) = la.qr(AA, mode='economic')
             (Q_L, R_L) = la.qr(LL, mode='economic')
-            
+
             lambdah = gg(AA,Q_A,R_A,b_,LL,Q_L,R_L,np.zeros((LL.shape[0],1)))
             w1 = 1
             w2 = lambdah**2
-            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)), 
+            y,_,_,_ = np.linalg.lstsq(np.concatenate((w1*R_A, (lambdah) * R_L)),
                         np.concatenate((w1*Q_A.T@ b_, (lambdah) *np.zeros((R_L.shape[0],1)))),rcond=None)
         else:
             lambdah = regparam
@@ -1535,7 +1540,7 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
 
 
         x = V @ y
-        
+
         if (non_neg):
             x[x<0] = 0
         x_history.append(x)
@@ -1569,9 +1574,9 @@ regparam='gcv', vs_true = None, v_primes_true = None, v_max = None, x_true=None,
     if x_true is not None:
         x_true_norm = la.norm(x_true)
         rre_history = [la.norm(x - x_true)/x_true_norm for x in x_history]
-        info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history,'regParam2_history': alpha_history, 
+        info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history,'regParam2_history': alpha_history,
                 'relError': rre_history, 'Residual': residual_history, 'its': ii,'Ms':Ms,'M_primes':M_primes}
     else:
         info = {'xHistory': x_history, 'regParam': lambdah, 'regParam_history': lambda_history, 'Residual': residual_history, 'its': ii}
-    
-    return (x, info, v_ests, v_inv_ests, M_history, v_ests_history, ux_uy_history, ut_history)
+
+    return (x, info, v_ests, v_inv_ests, M_history, x_history, v_ests_history, ux_history, uy_history, ux_uy_history, ut_history)
